@@ -6,10 +6,9 @@ import os
 import csv
 import json
 import warnings
-
+import shutil
 import numpy as np
 import pandas as pd
-
 from sklearn.decomposition import PCA
 from sklearn.cluster import (
     KMeans, MiniBatchKMeans, AgglomerativeClustering, SpectralClustering,
@@ -20,7 +19,6 @@ from sklearn.metrics import (
     silhouette_score, calinski_harabasz_score, davies_bouldin_score,
     f1_score, adjusted_rand_score, normalized_mutual_info_score
 )
-
 from scipy.optimize import linear_sum_assignment
 from scipy.stats import pearsonr, spearmanr
 
@@ -280,78 +278,61 @@ def pick_best_configuration(df, select_by="silhouette"):
     return df.iloc[0].to_dict()
 
 def make_plots(outdir, X_pca, ids, labels_true_map, best_algo, best_params, best_labels, df_var, df_clust):
-    try:
-        import matplotlib
-        matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
-    except Exception:
-        return
+    import matplotlib.pyplot as plt
+    import json, os
 
     os.makedirs(outdir, exist_ok=True)
-
-    # Scree
-    fig = plt.figure(figsize=(8, 5))
-    y = df_var["explained_variance_ratio"].values
-    plt.plot(range(1, len(y)+1), y, marker="o")
-    plt.xlabel("PC")
-    plt.ylabel("Explained variance ratio")
-    plt.title("PCA Scree")
-    plt.tight_layout()
-    fig.savefig(os.path.join(outdir, "pca_scree.png"), dpi=150)
-    plt.close(fig)
-
-    # Scatter PC1 x PC2 (labels externos se houver)
-    fig = plt.figure(figsize=(6, 6))
     x1, x2 = X_pca[:, 0], X_pca[:, 1]
+
+    fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+    axes = axes.ravel()
+
+    y = df_var["explained_variance_ratio"].values
+    axes[0].plot(range(1, len(y) + 1), y, marker="o")
+    axes[0].set_xlabel("PC")
+    axes[0].set_ylabel("Explained variance ratio")
+    axes[0].set_title("PCA Scree")
+
     if labels_true_map:
         labs = [labels_true_map.get(i, None) for i in ids]
         uniq = sorted(list({l for l in labs if l is not None}))
         if len(uniq) >= 2:
             for l in uniq:
                 m = [li == l for li in labs]
-                plt.scatter(x1[m], x2[m], s=16, label=str(l), alpha=0.8)
-            plt.legend(title="Label")
+                axes[1].scatter(x1[m], x2[m], s=16, label=str(l), alpha=0.8)
+            axes[1].legend(title="Label")
         else:
-            plt.scatter(x1, x2, s=16, alpha=0.8)
+            axes[1].scatter(x1, x2, s=16, alpha=0.8)
     else:
-        plt.scatter(x1, x2, s=16, alpha=0.8)
-    plt.xlabel("PC1")
-    plt.ylabel("PC2")
-    plt.title("PCA PC1×PC2")
-    plt.tight_layout()
-    fig.savefig(os.path.join(outdir, "pca_scatter_pc1_pc2.png"), dpi=150)
-    plt.close(fig)
+        axes[1].scatter(x1, x2, s=16, alpha=0.8)
+    axes[1].set_xlabel("PC1")
+    axes[1].set_ylabel("PC2")
+    axes[1].set_title("PCA PC1×PC2")
 
-    # Melhor configuração: PC1 x PC2 colorido por cluster
-    fig = plt.figure(figsize=(6,6))
-    plt.scatter(x1, x2, c=best_labels, s=16, alpha=0.85)
-    plt.xlabel("PC1")
-    plt.ylabel("PC2")
-    plt.title(f"Best ({best_algo}) by clusters")
-    plt.tight_layout()
-    fig.savefig(os.path.join(outdir, f"pca_scatter_best_{best_algo}.png"), dpi=150)
-    plt.close(fig)
+    sc = axes[2].scatter(x1, x2, c=best_labels, s=16, alpha=0.85)
+    axes[2].set_xlabel("PC1")
+    axes[2].set_ylabel("PC2")
+    axes[2].set_title(f"Best ({best_algo}) by clusters")
 
-    # Curvas para KMeans (métricas vs k)
     df_km = df_clust[df_clust["algo"] == "KMeans"].copy()
     if not df_km.empty and "params" in df_km:
         df_km["k"] = df_km["params"].apply(lambda s: json.loads(s).get("k") if isinstance(s, str) else None)
-        df_km = df_km.dropna(subset=["k"])
-        df_km = df_km.sort_values("k")
-        fig = plt.figure(figsize=(8,5))
+        df_km = df_km.dropna(subset=["k"]).sort_values("k")
         if df_km["silhouette"].notna().any():
-            plt.plot(df_km["k"], df_km["silhouette"], marker="o", label="Silhouette")
+            axes[3].plot(df_km["k"], df_km["silhouette"], marker="o", label="Silhouette")
         if df_km["calinski"].notna().any():
-            plt.plot(df_km["k"], df_km["calinski"], marker="o", label="Calinski")
+            axes[3].plot(df_km["k"], df_km["calinski"], marker="o", label="Calinski")
         if df_km["davies"].notna().any():
-            plt.plot(df_km["k"], df_km["davies"], marker="o", label="Davies")
-        plt.xlabel("k")
-        plt.ylabel("score")
-        plt.title("KMeans: métricas internas vs k")
-        plt.legend()
-        plt.tight_layout()
-        fig.savefig(os.path.join(outdir, "kmeans_metrics_vs_k.png"), dpi=150)
-        plt.close(fig)
+            axes[3].plot(df_km["k"], df_km["davies"], marker="o", label="Davies")
+        axes[3].set_xlabel("k")
+        axes[3].set_ylabel("score")
+        axes[3].set_title("KMeans: métricas internas vs k")
+        axes[3].legend()
+
+    plt.tight_layout()
+    fig.savefig(os.path.join(outdir, "painel_completo.png"), dpi=150)
+    plt.show()
+
 
 def main():
     ap = argparse.ArgumentParser(description="2X2 binário + PCA + Clustering (métricas internas/externas).")
@@ -359,138 +340,53 @@ def main():
     ap.add_argument("--outdir", required=True, help="Diretório de saída")
     ap.add_argument("--skips", default="0,1", help="Skips separados por vírgula (ex.: 0,1,2)")
     ap.add_argument("--limit", type=int, default=0, help="Processa apenas as N primeiras sequências")
-    ap.add_argument("--pca_components", type=int, default=300, help="Número de componentes principais (PCA)")
-    ap.add_argument("--labels_csv", default=None, help="CSV com colunas seq_id,label para métrica externa (F1). Opcional.")
-    ap.add_argument("--max_k", type=int, default=12, help="Máx. clusters/Componentes em modelos que pedem K (padrão: 12).")
-    ap.add_argument("--run_dbscan", action="store_true", help="Também roda DBSCAN com pequena grade de eps/min_samples.")
-    ap.add_argument("--run_all", action="store_true", help="Inclui AffinityPropagation, MeanShift e OPTICS (pode demorar).")
-    ap.add_argument("--select_by", default="silhouette", choices=["silhouette","calinski","davies"], help="Métrica interna-alvo para seleção da melhor configuração")
-    ap.add_argument("--plot", action="store_true", help="Gera e salva gráficos PNG no outdir")
+    ap.add_argument("--pca_components", type=int, default=200, help="Número de componentes PCA")
+    ap.add_argument("--max_k", type=int, default=12, help="Máximo de clusters (k)")
+    ap.add_argument("--select_by", default="silhouette", choices=["silhouette","calinski","davies"], help="Critério de seleção")
+    ap.add_argument("--run_dbscan", action="store_true", help="Executar DBSCAN")
+    ap.add_argument("--run_all", action="store_true", help="Executar todos os métodos extras")
+    ap.add_argument("--plot", action="store_true", help="Gerar gráficos")
+    ap.add_argument("--labels_csv", help="CSV opcional com seq_id,label")
     args = ap.parse_args()
 
-    skips = [int(x.strip()) for x in args.skips.split(",") if x.strip() != ""]
-    os.makedirs(args.outdir, exist_ok=True)
+    if os.path.exists(args.outdir):
+        for item in os.listdir(args.outdir):
+            item_path = os.path.join(args.outdir, item)
+            try:
+                if os.path.isfile(item_path) or os.path.islink(item_path):
+                    os.unlink(item_path)
+                elif os.path.isdir(item_path):
+                    shutil.rmtree(item_path)
+            except Exception:
+                pass
+    else:
+        os.makedirs(args.outdir, exist_ok=True)
 
+    skips = [int(s.strip()) for s in args.skips.split(",") if s.strip()]
     seqs = read_fasta(args.fasta)
-    ids = list(seqs.keys())
-    if args.limit and args.limit > 0:
-        ids = ids[:args.limit]
-
+    if args.limit > 0:
+        seqs = dict(list(seqs.items())[:args.limit])
+    seq_ids = list(seqs.keys())
     headers = [f"{p}|skip={x}" for x in skips for p in PAIRS]
     headers_index = {h: i for i, h in enumerate(headers)}
-
-    X = np.zeros((len(ids), len(headers)), dtype=np.float64)
-    for r, sid in enumerate(ids):
-        X[r, :] = features_2x2_binary(seqs[sid], skips, headers_index)
-    X = X.astype(np.float64)
-
-    out_csv = os.path.join(args.outdir, f"kmer_2X2_binary_skips-{'-'.join(map(str,skips))}.csv")
-    with open(out_csv, "w", newline="", encoding="utf-8") as f:
-        w = csv.writer(f)
-        w.writerow(["seq_id"] + headers)
-        for r, sid in enumerate(ids):
-            w.writerow([sid] + X[r, :].astype(int).tolist())
-    print(f"[OK] Matriz binária salva: {out_csv}")
-    print(f"  - N sequências: {len(ids)}")
-    print(f"  - D atributos:  {len(headers)} (400 pares × {len(skips)} skips)")
-
-    n_samples, n_features = X.shape
-    if n_samples < 2:
-        print("[AVISO] PCA requer ao menos 2 amostras. Projeção não realizada.")
-        return
-
-    k_req = int(args.pca_components)
-    k_max = min(k_req, n_samples, n_features)
-    if k_max < k_req:
-        print(f"[INFO] Ajustando componentes PCA de {k_req} para {k_max} (limitado por N={n_samples}, D={n_features}).")
-
-    pca = PCA(n_components=k_max, svd_solver="auto", random_state=0)
-    X_pca = pca.fit_transform(X).astype(np.float64)
-
-    pcs_cols = [f"PC{i}" for i in range(1, k_max + 1)]
-    df_scores = pd.DataFrame(X_pca, columns=pcs_cols)
-    df_scores.insert(0, "seq_id", ids)
-    scores_csv = os.path.join(args.outdir, f"pca_scores_k{k_max}.csv")
-    df_scores.to_csv(scores_csv, index=False)
-
-    var_ratio = pca.explained_variance_ratio_
-    df_var = pd.DataFrame({
-        "PC": pcs_cols,
-        "explained_variance_ratio": var_ratio,
-        "cumulative_variance_ratio": np.cumsum(var_ratio)
-    })
-    var_csv = os.path.join(args.outdir, f"pca_explained_variance_k{k_max}.csv")
-    df_var.to_csv(var_csv, index=False)
-
-    print(f"[OK] PCA salvo:")
-    print(f"  - Scores:    {scores_csv}")
-    print(f"  - Variância: {var_csv}")
-    print(f"  - Var. acumulada (PC1..PC{k_max}): {df_var['cumulative_variance_ratio'].iloc[-1]:.4f}")
-
-    labels_map = load_labels_csv(args.labels_csv) if args.labels_csv else None
-    labels_true = None
-    if labels_map is not None:
-        labels_true = [labels_map.get(sid, None) for sid in ids]
-        if any(lbl is None for lbl in labels_true):
-            print("[AVISO] Alguns seq_id não têm rótulo em labels_csv; serão ignorados no cálculo de F1/ARI/NMI.")
-
-    print("[INFO] Rodando algoritmos de clustering…")
-    df_clust = run_all_clusterings(
-        X=X_pca,
-        seq_ids=ids,
-        labels_true=None if labels_true is None else np.array(labels_true, dtype=object),
-        max_k=args.max_k,
-        run_dbscan=args.run_dbscan,
-        run_all=args.run_all
-    )
-    clust_csv = os.path.join(args.outdir, f"clustering_results_kmax{args.max_k}.csv")
-    df_clust.to_csv(clust_csv, index=False)
-    print(f"[OK] Resultados de clustering salvos em: {clust_csv}")
-
-    df_corr = correlate_internal_with_f1(df_clust)
-    corr_csv = os.path.join(args.outdir, f"clustering_internal_vs_f1_correlations.csv")
-    df_corr.to_csv(corr_csv, index=False)
-    print(f"[OK] Correlações salvas em: {corr_csv}")
-
-    best = pick_best_configuration(df_clust, select_by=args.select_by)
+    X = np.array([features_2x2_binary(seqs[i], skips, headers_index) for i in seq_ids], dtype=np.float64)
+    df_feat = pd.DataFrame(X, index=seq_ids, columns=headers)
+    pca = PCA(n_components=min(args.pca_components, X.shape[1]-1))
+    X_pca = pca.fit_transform(X)
+    df_var = pd.DataFrame({"explained_variance_ratio": pca.explained_variance_ratio_})
+    labels_true_map = load_labels_csv(args.labels_csv) if args.labels_csv else None
+    labels_true = [labels_true_map.get(i) if labels_true_map else None for i in seq_ids]
+    df_clust = run_all_clusterings(X_pca, seq_ids, labels_true, args.max_k, args.run_dbscan, args.run_all)
+    df_clust.to_csv(os.path.join(args.outdir, "cluster_metrics.csv"), index=False, quoting=csv.QUOTE_NONNUMERIC)
+    best = pick_best_configuration(df_clust, args.select_by)
     best_algo = best["algo"]
-    best_params = json.loads(best["params"])
+    best_params = json.loads(best["params"]) if isinstance(best["params"], str) else best["params"]
     best_labels = build_and_predict(best_algo, best_params, X_pca)
-    best_labels_csv = os.path.join(args.outdir, f"best_labels_{args.select_by}.csv")
-    pd.DataFrame({"seq_id": ids, "cluster": best_labels}).to_csv(best_labels_csv, index=False)
-    best_json = {
-        "select_by": args.select_by,
-        "algo": best_algo,
-        "params": best_params,
-        "metrics": {
-            "silhouette": float(best.get("silhouette")) if pd.notna(best.get("silhouette")) else None,
-            "calinski": float(best.get("calinski")) if pd.notna(best.get("calinski")) else None,
-            "davies": float(best.get("davies")) if pd.notna(best.get("davies")) else None,
-            "f1_macro": float(best.get("f1_macro")) if pd.notna(best.get("f1_macro")) else None,
-            "f1_weighted": float(best.get("f1_weighted")) if pd.notna(best.get("f1_weighted")) else None,
-        }
-    }
-    with open(os.path.join(args.outdir, f"best_config_{args.select_by}.json"), "w", encoding="utf-8") as f:
-        json.dump(best_json, f, ensure_ascii=False, indent=2)
-    print("[OK] Melhor configuração sugerida:")
-    print(f"  - select_by: {args.select_by}")
-    print(f"  - algo:      {best_algo}")
-    print(f"  - params:    {json.dumps(best_params)}")
-    print(f"  - labels:    {best_labels_csv}")
-
+    pd.DataFrame({"seq_id": seq_ids, "cluster": best_labels}).to_csv(os.path.join(args.outdir, "best_assignments.csv"), index=False)
+    df_corr = correlate_internal_with_f1(df_clust)
+    df_corr.to_csv(os.path.join(args.outdir, "correlations.csv"), index=False)
     if args.plot:
-        make_plots(
-            outdir=args.outdir,
-            X_pca=X_pca,
-            ids=ids,
-            labels_true_map=(labels_map if labels_map else {}),
-            best_algo=best_algo,
-            best_params=best_params,
-            best_labels=best_labels,
-            df_var=df_var,
-            df_clust=df_clust
-        )
-        print(f"[OK] Gráficos salvos em: {args.outdir}")
+        make_plots(args.outdir, X_pca, seq_ids, labels_true_map, best_algo, best_params, best_labels, df_var, df_clust)
 
 if __name__ == "__main__":
     main()

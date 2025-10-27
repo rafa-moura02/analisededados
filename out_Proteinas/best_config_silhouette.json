@@ -1,0 +1,14 @@
+{
+  "select_by": "silhouette",
+  "algo": "MiniBatchKMeans",
+  "params": {
+    "k": 12
+  },
+  "metrics": {
+    "silhouette": 0.1572066154716619,
+    "calinski": 9.87619440410091,
+    "davies": 2.243029965857898,
+    "f1_macro": null,
+    "f1_weighted": null
+  }
+}
